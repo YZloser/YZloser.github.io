@@ -352,7 +352,25 @@
       
         
           
-            
+            <p>一直以来对<code>house of orange</code>的流程不太熟悉，这次分析一下<code>house of orange</code>的原题，学习一波<code>house of orange</code></p>
+<h2 id="漏洞点"><a href="#漏洞点" class="headerlink" title="漏洞点"></a>漏洞点</h2><p><code>house of orange</code>的程序流程很简单，有<code>build</code>,<code>see</code>,<code>upgrade</code>三种操作</p>
+<p>只能<code>build</code>四次，每次<code>build</code>是两次<code>malloc</code>，大小分别为0x10字节与0-0x1000字节任选，一次<code>calloc</code>，8字节</p>
+<p>可以<code>upgrade</code>三次，其中大小可以自己输入，很明显的堆溢出</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">v2 = readint();</span><br><span class="line"><span class="keyword">if</span> ( v2 &gt; <span class="number">0x1000</span> )</span><br><span class="line">  v2 = <span class="number">4096</span>;</span><br><span class="line"><span class="built_in">printf</span>(<span class="string">"Name:"</span>);</span><br><span class="line">readbytes((<span class="keyword">void</span> *)houseptr[<span class="number">1</span>], v2);</span><br></pre></td></tr></table></figure>
+
+<p>然而程序里没有<code>free</code>，如何利用堆溢出成为了问题</p>
+<h2 id="漏洞利用"><a href="#漏洞利用" class="headerlink" title="漏洞利用"></a>漏洞利用</h2><p>由堆溢出，我们可以修改<code>top_chunk</code>的大小，当各种<code>bin</code>均不能满足申请空间的分配且<code>top_chunk</code>的大小不足申请的大小时，将调用<code>sysmalloc</code>来进行分配</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">/*</span></span><br><span class="line"><span class="comment">   Otherwise, relay to handle system-dependent cases</span></span><br><span class="line"><span class="comment"> */</span></span><br><span class="line"><span class="keyword">else</span></span><br><span class="line">  &#123;</span><br><span class="line">    <span class="keyword">void</span> *p = sysmalloc (nb, av);</span><br><span class="line">    <span class="keyword">if</span> (p != <span class="literal">NULL</span>)</span><br><span class="line">      alloc_perturb (p, bytes);</span><br><span class="line">    <span class="keyword">return</span> p;</span><br><span class="line">  &#125;</span><br></pre></td></tr></table></figure>
+
+<p><code>sysmalloc</code>中满足如下条件会通过<code>mmap</code>分配空间</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (av == <span class="literal">NULL</span></span><br><span class="line">    || ((<span class="keyword">unsigned</span> <span class="keyword">long</span>) (nb) &gt;= (<span class="keyword">unsigned</span> <span class="keyword">long</span>) (mp_.mmap_threshold)</span><br><span class="line"> &amp;&amp; (mp_.n_mmaps &lt; mp_.n_mmaps_max)))</span><br></pre></td></tr></table></figure>
+
+<p>否则会扩展<code>top_chunk</code>，但是还需要绕过一些安全检查</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">assert ((old_top == initial_top (av) &amp;&amp; old_size == <span class="number">0</span>) ||</span><br><span class="line">          ((<span class="keyword">unsigned</span> <span class="keyword">long</span>) (old_size) &gt;= MINSIZE &amp;&amp;</span><br><span class="line">           prev_inuse (old_top) &amp;&amp;</span><br><span class="line">           ((<span class="keyword">unsigned</span> <span class="keyword">long</span>) old_end &amp; (pagesize - <span class="number">1</span>)) == <span class="number">0</span>));</span><br><span class="line"></span><br><span class="line">  <span class="comment">/* Precondition: not enough current space to satisfy nb request */</span></span><br><span class="line">  assert ((<span class="keyword">unsigned</span> <span class="keyword">long</span>) (old_size) &lt; (<span class="keyword">unsigned</span> <span class="keyword">long</span>) (nb + MINSIZE));</span><br></pre></td></tr></table></figure>
+
+<p><code>mmap_threshold</code>的值为128*1024，比它小即可，<code>top_chunk</code>必须有<code>pre_inuse</code>位，尾部必须与页对齐，大小必须超过0x10</p>
+<p>接下来就会扩展<code>top_chunk</code></p>
+
           
         
       
